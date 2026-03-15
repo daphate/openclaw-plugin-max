@@ -191,8 +191,10 @@ function getSenderId(update) {
  */
 function getRecipientType(update) {
   const r = update?.message?.recipient;
-  const ct = r?.chat_type;
-  return ct === "chat" || ct === "channel" ? "group" : "direct";
+  const ct = r?.chat_type ?? r?.type ?? r?.chat?.chat_type ?? r?.chat?.type;
+  if (ct === "chat" || ct === "channel" || ct === "group") return "group";
+  if (r?.chat_id != null || r?.chat?.chat_id != null) return "group";
+  return "direct";
 }
 
 /** Плейсхолдеры для вложений в тексте для агента (как в Telegram). */
@@ -546,7 +548,10 @@ async function enforceMaxAccess(params) {
     return { allowed: true };
   }
 
-  const directConfig = account?.direct?.[String(toId)] ?? account?.dms?.[String(fromId)];
+  const directConfig =
+    account?.direct?.[String(fromId)] ??
+    account?.direct?.[String(toId)] ??
+    account?.dms?.[String(fromId)];
   const effectiveDmPolicy = firstDefined(directConfig?.dmPolicy, dmPolicy);
   if (directConfig?.enabled === false) {
     log?.debug?.(`[Max] Blocked: direct/chat disabled`);
@@ -590,7 +595,7 @@ async function enforceMaxAccess(params) {
           idLine: `Your Max user id: ${fromId}`,
           code,
         });
-        await sendToMax(toId, text);
+        await sendToMax(fromId, text, { chatKind: "direct" });
       }
     } catch (e) {
       log?.warn?.(`[Max] Pairing: ${e?.message}`);
@@ -629,7 +634,13 @@ async function processMaxUpdate(update, { cfg, accountId, api, channelRuntime, l
   }
 
   const chatKind = getRecipientType(update);
+  const replyPeerId = chatKind === "group" ? toId : fromId;
   const rt = channelRuntime;
+
+  if (!replyPeerId) {
+    log?.warn?.("[Max] Skip: no reply peer id");
+    return;
+  }
 
   if (
     !rt?.routing?.resolveAgentRoute ||
@@ -653,7 +664,7 @@ async function processMaxUpdate(update, { cfg, accountId, api, channelRuntime, l
   });
   if (!access.allowed) return;
 
-  const chatIdNum = parseInt(String(toId), 10);
+  const chatIdNum = parseInt(String(replyPeerId), 10);
   if (isNaN(chatIdNum)) return;
 
   /** Показать «думает» (как эмодзи в Telegram): в Max нет реакций, используем typing_on. */
@@ -666,13 +677,13 @@ async function processMaxUpdate(update, { cfg, accountId, api, channelRuntime, l
       cfg,
       channel: "max",
       accountId,
-      peer: { kind: chatKind, id: String(toId) },
+      peer: { kind: chatKind, id: String(replyPeerId) },
     });
     const sessionKey = rt.routing.buildAgentSessionKey({
       agentId: route.agentId,
       channel: "max",
       accountId,
-      peer: { kind: chatKind, id: String(toId) },
+      peer: { kind: chatKind, id: String(replyPeerId) },
       dmScope: "main",
     });
     const ctxPayload = {
@@ -681,7 +692,7 @@ async function processMaxUpdate(update, { cfg, accountId, api, channelRuntime, l
       BodyForCommands: bodyText,
       RawBody: bodyText,
       From: fromId,
-      To: toId,
+      To: replyPeerId,
       SessionKey: sessionKey,
       AccountId: accountId,
       ChatType: chatKind,
@@ -712,7 +723,7 @@ async function processMaxUpdate(update, { cfg, accountId, api, channelRuntime, l
             payload?.summary ??
             "";
           const mediaUrls = payload?.mediaUrls?.length ? payload.mediaUrls : payload?.mediaUrl ? [payload.mediaUrl] : [];
-          await sendToMax(toId, text, { mediaUrls, api, log, audioAsVoice: payload?.audioAsVoice, chatKind });
+          await sendToMax(replyPeerId, text, { mediaUrls, api, log, audioAsVoice: payload?.audioAsVoice, chatKind });
         },
       },
       replyOptions: {
