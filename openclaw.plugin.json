@@ -1,0 +1,14 @@
+{
+  "id": "openclaw-plugin-max",
+  "name": "Max Channel Plugin",
+  "version": "1.0.0",
+  "description": "Adds support for the Russian messenger Max (max.ru) to OpenClaw: text, voice, photos, video, files; typing indicator when agent thinks",
+  "author": "Nikolay Pushkin",
+  "license": "MIT",
+  "channels": ["max"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
