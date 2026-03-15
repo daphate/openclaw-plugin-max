@@ -715,7 +715,7 @@ async function processMaxUpdate(update, { cfg, accountId, api, channelRuntime, l
             payload?.summary ??
             "";
           const mediaUrls = payload?.mediaUrls?.length ? payload.mediaUrls : payload?.mediaUrl ? [payload.mediaUrl] : [];
-          await sendToMax(toId, text, { mediaUrls, api, log, audioAsVoice: payload?.audioAsVoice });
+          await sendToMax(toId, text, { mediaUrls, api, log, audioAsVoice: payload?.audioAsVoice, chatKind });
         },
       },
       replyOptions: {
@@ -887,7 +887,10 @@ export default function register(api) {
             return { ok: false, error: "Invalid recipient id", channel: "max", messageId: "" };
           }
 
-          const result = await bot.api.sendMessageToChat(toNum, text ?? "");
+          // Negative IDs are group chats; positive IDs are user DMs
+          const result = toNum < 0
+            ? await bot.api.sendMessageToChat(toNum, text ?? "")
+            : await bot.api.sendMessageToUser(toNum, text ?? "");
 
           const messageId = result?.link?.mid ?? result?.mid ?? result?.id ?? `max-${Date.now()}`;
           api.logger.debug("[Max] Message sent successfully");
@@ -965,9 +968,12 @@ export default function register(api) {
           log?.warn?.(`[Max] Bot error: ${err.message}`);
         });
 
-        const sendTextOnly = (num, t) => bot.api.sendMessageToChat(num, t ?? "");
+        const makeSendTextOnly = (chatKind) => (num, t) => {
+          if (chatKind === "group") return bot.api.sendMessageToChat(num, t ?? "");
+          return bot.api.sendMessageToUser(num, t ?? "");
+        };
         const sendToMax = async (toId, text, opts) => {
-          await sendToMaxImpl(toId, text, opts, sendTextOnly);
+          await sendToMaxImpl(toId, text, opts, makeSendTextOnly(opts?.chatKind ?? "direct"));
         };
         const sendAction = (chatId, action) => bot.api.sendAction(chatId, action);
 
@@ -1043,9 +1049,12 @@ export default function register(api) {
 
       if (account?.token && channelRuntime) {
         const bot = new Bot(account.token);
-        const sendTextOnly = (num, t) => bot.api.sendMessageToChat(num, t ?? "");
+        const makeSendTextOnlyWh = (chatKind) => (num, t) => {
+          if (chatKind === "group") return bot.api.sendMessageToChat(num, t ?? "");
+          return bot.api.sendMessageToUser(num, t ?? "");
+        };
         const sendToMax = async (toId, text, opts) => {
-          await sendToMaxImpl(toId, text, opts, sendTextOnly);
+          await sendToMaxImpl(toId, text, opts, makeSendTextOnlyWh(opts?.chatKind ?? "direct"));
         };
         const sendAction = (chatId, action) => bot.api.sendAction(chatId, action);
         const updates = Array.isArray(data) ? data : [data];
