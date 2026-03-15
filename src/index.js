@@ -906,6 +906,32 @@ export default function register(api) {
           };
         }
       },
+      sendMedia: async ({ cfg, to, text, mediaUrl, accountId }) => {
+        if (!mediaUrl?.trim()) {
+          throw new Error("[Max] sendMedia called without mediaUrl");
+        }
+        const account = resolveAccount(cfg, accountId);
+        const token = account?.token;
+        if (!token) {
+          throw new Error("[Max] Missing token for sendMedia");
+        }
+        const bot = new Bot(token);
+        const toNum = parseInt(String(to).trim(), 10);
+        if (isNaN(toNum)) {
+          throw new Error(`[Max] Invalid recipient id: ${to}`);
+        }
+        const isLikelyAudio = /\.(ogg|opus|mp3|m4a|wav|webm)$/i.test(mediaUrl);
+        await sendMaxMessageWithMedia(
+          toNum,
+          text ?? "",
+          [mediaUrl.trim()],
+          bot.api,
+          api.logger,
+          isLikelyAudio,
+        );
+        api.logger.debug("[Max] Media sent successfully");
+        return { channel: "max", messageId: `max-media-${Date.now()}` };
+      },
     },
     status: {
       defaultRuntime: {
