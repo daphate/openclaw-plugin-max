@@ -240,6 +240,7 @@ const HTTP_URL_RE = /^https?:\/\//i;
 const FILE_URL_RE = /^file:\/\//i;
 const INLINE_MEDIA_RE = /(?:^|\n)\s*MEDIA:\s*([^\n]+)\s*(?=\n|$)/gi;
 const AUDIO_AS_VOICE_RE = /\[\[\s*audio_as_voice\s*\]\]/gi;
+const VOICE_STUB_RE = /^(?:\[[^\]]+\]\s*)?говорю голосом\s*:/i;
 
 function isLocalMediaSource(media) {
   if (!media || typeof media !== "string") return false;
@@ -437,9 +438,22 @@ async function sendMaxMessageWithMedia(chatId, text, mediaUrls, api, log, audioA
       const isAudio = /^audio\//.test(ct) || /\.(ogg|opus|mp3|m4a|wav|webm)$/i.test(trimmed);
       const isVideo = /^video\//.test(ct) || /\.(mp4|webm|mov)$/i.test(trimmed);
       if (isAudio) {
-        const up = await api.upload.audio({ source: buf });
-        const token = up?.token;
-        if (token) attachments.push({ type: "audio", payload: { token } });
+        try {
+          const up = await api.upload.audio({ source: buf });
+          const token = up?.token;
+          if (token) {
+            attachments.push({ type: "audio", payload: { token } });
+          } else {
+            throw new Error("no audio token");
+          }
+        } catch (audioErr) {
+          // Max API can reject some audio codecs/containers (e.g. mp3 from TTS).
+          // Fall back to generic file upload to avoid dropping the media reply.
+          log?.warn?.(`[Max] upload.audio failed, fallback to file: ${audioErr?.message}`);
+          const up = await api.upload.file({ source: buf });
+          const token = up?.token;
+          if (token) attachments.push({ type: "file", payload: { token } });
+        }
       } else if (isVideo) {
         const up = await api.upload.video({ source: buf });
         const token = up?.token;
@@ -453,8 +467,14 @@ async function sendMaxMessageWithMedia(chatId, text, mediaUrls, api, log, audioA
       log?.warn?.(`[Max] Media load/upload failed for ${trimmed.slice(0, 80)}: ${e?.message}`);
     }
   }
-  const body = { text: text || null, attachments: attachments.length ? attachments : undefined };
+  const safeText = String(text ?? "").trim();
+  if (!safeText && attachments.length === 0) {
+    log?.warn?.("[Max] Skip media send: no text and no attachments");
+    return false;
+  }
+  const body = { text: safeText || null, attachments: attachments.length ? attachments : undefined };
   await api.raw.messages.send({ chat_id: chatId, ...body });
+  return attachments.length > 0;
 }
 
 /**
@@ -473,15 +493,15 @@ async function sendToMaxImpl(toId, text, opts, sendTextOnly) {
   const mediaUrls = opts?.mediaUrls ?? [];
   if (mediaUrls.length === 0) {
     await sendTextOnly(num, text ?? "");
-    return;
+    return false;
   }
   if (!opts?.api) {
     opts?.log?.warn?.("[Max] No api for media send, falling back to text only");
     await sendTextOnly(num, text ?? "");
-    return;
+    return false;
   }
   try {
-    await sendMaxMessageWithMedia(
+    const sentMedia = await sendMaxMessageWithMedia(
       num,
       text ?? "",
       mediaUrls,
@@ -489,7 +509,10 @@ async function sendToMaxImpl(toId, text, opts, sendTextOnly) {
       opts.log,
       opts.audioAsVoice === true,
     );
-    opts?.log?.info?.(`[Max] Sent reply with media to chat ${num}`);
+    if (sentMedia) {
+      opts?.log?.info?.(`[Max] Sent reply with media to chat ${num}`);
+    }
+    return Boolean(sentMedia);
   } catch (err) {
     opts?.log?.warn?.(`[Max] Send with media failed: ${err?.message}`);
     try {
@@ -497,6 +520,7 @@ async function sendToMaxImpl(toId, text, opts, sendTextOnly) {
     } catch (e2) {
       opts?.log?.warn?.(`[Max] Fallback text send failed: ${e2?.message}`);
     }
+    return false;
   }
 }
 
@@ -711,6 +735,7 @@ async function processMaxUpdate(update, { cfg, accountId, api, channelRuntime, l
   const setThinking = () => {
     if (sendAction) sendAction(chatIdNum, "typing_on").catch((e) => log?.warn?.(`[Max] sendAction: ${e?.message}`));
   };
+  let sentVoiceMediaThisTurn = false;
 
   try {
     const route = rt.routing.resolveAgentRoute({
@@ -769,13 +794,21 @@ async function processMaxUpdate(update, { cfg, accountId, api, channelRuntime, l
               ? [payload.mediaUrl]
               : [];
           const mediaUrls = [...new Set([...payloadMediaUrls, ...parsed.mediaUrls])];
-          await sendToMax(replyPeerId, parsed.text, {
+          const looksLikeVoiceStub = VOICE_STUB_RE.test(parsed.text);
+          if (mediaUrls.length === 0 && looksLikeVoiceStub && sentVoiceMediaThisTurn) {
+            log?.debug?.("[Max] Skip duplicate voice-stub text after media delivery");
+            return;
+          }
+          const sentMedia = await sendToMax(replyPeerId, parsed.text, {
             mediaUrls,
             api,
             log,
             audioAsVoice: payload?.audioAsVoice || parsed.audioAsVoice,
             chatKind,
           });
+          if (sentMedia && (payload?.audioAsVoice || parsed.audioAsVoice)) {
+            sentVoiceMediaThisTurn = true;
+          }
         },
       },
       replyOptions: {
