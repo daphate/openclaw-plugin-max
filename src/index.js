@@ -241,6 +241,7 @@ const FILE_URL_RE = /^file:\/\//i;
 const INLINE_MEDIA_RE = /(?:^|\n)\s*MEDIA:\s*([^\n]+)\s*(?=\n|$)/gi;
 const AUDIO_AS_VOICE_RE = /\[\[\s*audio_as_voice\s*\]\]/gi;
 const VOICE_STUB_RE = /^(?:\[[^\]]+\]\s*)?говорю голосом\s*:/i;
+const MODEL_PREFIX_RE = /^\[\s*([^\]]+)\s*\]\s*/i;
 
 function isLocalMediaSource(media) {
   if (!media || typeof media !== "string") return false;
@@ -336,6 +337,23 @@ function parseInlineMediaDirectives(text) {
     mediaUrls,
     audioAsVoice: AUDIO_AS_VOICE_RE.test(src),
   };
+}
+
+/**
+ * Убирает служебный префикс модели в начале ответа
+ * (например "[Gemini 2.5 Flash]" / "[Sonnet 4.6]"), если это похоже на подпись движка.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function stripModelPrefix(text) {
+  const src = String(text ?? "").trim();
+  const m = src.match(MODEL_PREFIX_RE);
+  if (!m) return src;
+  const label = String(m[1] ?? "").toLowerCase();
+  const looksLikeModel = /(gemini|sonnet|claude|gpt|openrouter|anthropic|deepseek|llama|mistral)/i.test(label);
+  if (!looksLikeModel) return src;
+  return src.replace(MODEL_PREFIX_RE, "").trimStart();
 }
 
 /** Маппинг типа вложения Max → MIME для типов без URL. */
@@ -794,12 +812,13 @@ async function processMaxUpdate(update, { cfg, accountId, api, channelRuntime, l
               ? [payload.mediaUrl]
               : [];
           const mediaUrls = [...new Set([...payloadMediaUrls, ...parsed.mediaUrls])];
-          const looksLikeVoiceStub = VOICE_STUB_RE.test(parsed.text);
+          const cleanText = stripModelPrefix(parsed.text);
+          const looksLikeVoiceStub = VOICE_STUB_RE.test(cleanText);
           if (mediaUrls.length === 0 && looksLikeVoiceStub && sentVoiceMediaThisTurn) {
             log?.debug?.("[Max] Skip duplicate voice-stub text after media delivery");
             return;
           }
-          const sentMedia = await sendToMax(replyPeerId, parsed.text, {
+          const sentMedia = await sendToMax(replyPeerId, cleanText, {
             mediaUrls,
             api,
             log,
