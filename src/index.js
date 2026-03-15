@@ -191,7 +191,8 @@ function getSenderId(update) {
  */
 function getRecipientType(update) {
   const r = update?.message?.recipient;
-  return r?.type === "chat" ? "group" : "direct";
+  const ct = r?.chat_type;
+  return ct === "chat" || ct === "channel" ? "group" : "direct";
 }
 
 /** Плейсхолдеры для вложений в тексте для агента (как в Telegram). */
@@ -386,28 +387,24 @@ async function sendMaxMessageWithMedia(chatId, text, mediaUrls, api, log, audioA
         continue;
       }
       if (isImage) {
-        const up = await api.upload.image({ source: { buffer: buf } });
-        const token = up?.token ?? up?.payload?.token;
+        const up = await api.upload.image({ source: buf });
+        const token = Object.values(up?.photos ?? {})[0]?.token;
         if (token) attachments.push({ type: "image", payload: { token } });
         continue;
       }
       const isAudio = /^audio\//.test(ct) || /\.(ogg|opus|mp3|m4a|wav|webm)$/i.test(trimmed);
       const isVideo = /^video\//.test(ct) || /\.(mp4|webm|mov)$/i.test(trimmed);
-      if (audioAsVoice && isAudio) {
-        const up = await api.upload.audio({ source: { buffer: buf } });
-        const token = up?.token ?? up?.payload?.token;
-        if (token) attachments.push({ type: "audio", payload: { token } });
-      } else if (isAudio) {
-        const up = await api.upload.audio({ source: { buffer: buf } });
-        const token = up?.token ?? up?.payload?.token;
+      if (isAudio) {
+        const up = await api.upload.audio({ source: buf });
+        const token = up?.token;
         if (token) attachments.push({ type: "audio", payload: { token } });
       } else if (isVideo) {
-        const up = await api.upload.video({ source: { buffer: buf } });
-        const token = up?.token ?? up?.payload?.token;
+        const up = await api.upload.video({ source: buf });
+        const token = up?.token;
         if (token) attachments.push({ type: "video", payload: { token } });
       } else {
-        const up = await api.upload.file({ source: { buffer: buf } });
-        const token = up?.token ?? up?.payload?.token;
+        const up = await api.upload.file({ source: buf });
+        const token = up?.token;
         if (token) attachments.push({ type: "file", payload: { token } });
       }
     } catch (e) {
@@ -892,7 +889,7 @@ export default function register(api) {
             ? await bot.api.sendMessageToChat(toNum, text ?? "")
             : await bot.api.sendMessageToUser(toNum, text ?? "");
 
-          const messageId = result?.link?.mid ?? result?.mid ?? result?.id ?? `max-${Date.now()}`;
+          const messageId = result?.body?.mid ?? `max-${Date.now()}`;
           api.logger.debug("[Max] Message sent successfully");
           return {
             ok: true,
