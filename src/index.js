@@ -10,6 +10,8 @@
  * @see https://dev.max.ru/docs-api
  */
 
+import fs from "node:fs/promises";
+import path from "node:path";
 import { Bot } from "@maxhub/max-bot-api";
 
 /** Идентификатор аккаунта по умолчанию, если не задан другой. */
@@ -231,6 +233,67 @@ const MAX_MEDIA_FETCH_BYTES = 50 * 1024 * 1024; // 50 MB
 /** Макс. размер входящего медиа для fetch (аудио/видео до 25MB). */
 const MAX_INBOUND_MEDIA_BYTES = 25 * 1024 * 1024;
 
+const HTTP_URL_RE = /^https?:\/\//i;
+const FILE_URL_RE = /^file:\/\//i;
+
+function isLocalMediaSource(media) {
+  if (!media || typeof media !== "string") return false;
+  const t = media.trim();
+  return (
+    FILE_URL_RE.test(t) ||
+    t.startsWith("/") ||
+    t.startsWith("./") ||
+    t.startsWith("../") ||
+    t.startsWith("~") ||
+    /^[a-zA-Z]:[\\/]/.test(t)
+  );
+}
+
+async function resolveLocalPath(raw) {
+  const t = raw.trim();
+  if (FILE_URL_RE.test(t)) {
+    try {
+      return decodeURIComponent(new URL(t).pathname);
+    } catch {
+      return path.resolve(t.replace(/^file:\/\//, ""));
+    }
+  }
+  if (t.startsWith("~")) {
+    const home = process.env.HOME || process.env.USERPROFILE || "";
+    return path.join(home, t.slice(1).replace(/^[/\\]/, ""));
+  }
+  return path.resolve(t);
+}
+
+async function loadMediaBuffer(mediaUrl, log) {
+  if (!isLocalMediaSource(mediaUrl)) {
+    const res = await fetch(mediaUrl.trim());
+    const contentType = (res.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
+    const buf = Buffer.from(await res.arrayBuffer());
+    return { buffer: buf, contentType };
+  }
+  const absPath = await resolveLocalPath(mediaUrl);
+  const buf = await fs.readFile(absPath);
+  const ext = path.extname(absPath).toLowerCase();
+  const extToMime = {
+    ".mp3": "audio/mpeg",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/opus",
+    ".m4a": "audio/mp4",
+    ".wav": "audio/wav",
+    ".webm": "audio/webm",
+    ".mp4": "video/mp4",
+    ".mov": "video/quicktime",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+  };
+  const contentType = extToMime[ext] || "application/octet-stream";
+  return { buffer: buf, contentType };
+}
+
 /** Маппинг типа вложения Max → MIME для типов без URL. */
 const ATTACHMENT_TYPE_TO_MIME = {
   audio: "audio/ogg",
@@ -305,24 +368,31 @@ async function sendMaxMessageWithMedia(chatId, text, mediaUrls, api, log, audioA
     const trimmed = url.trim();
     if (!trimmed) continue;
     try {
-      const res = await fetch(trimmed);
-      const contentType = (res.headers.get("content-type") || "").split(";")[0].trim().toLowerCase();
-      const pathname = (() => {
-        try {
-          return new URL(trimmed).pathname;
-        } catch {
-          return "";
-        }
-      })();
-      const isImage = /^image\//.test(contentType) || /\.(jpe?g|png|gif|webp)$/i.test(pathname);
-      if (isImage) {
+      const { buffer: buf, contentType } = await loadMediaBuffer(trimmed, log);
+      if (buf.length === 0 || buf.length > MAX_MEDIA_FETCH_BYTES) continue;
+      const ct = (contentType || "").split(";")[0].trim().toLowerCase();
+      const pathname = HTTP_URL_RE.test(trimmed)
+        ? (() => {
+            try {
+              return new URL(trimmed).pathname;
+            } catch {
+              return "";
+            }
+          })()
+        : "";
+      const isImage = /^image\//.test(ct) || /\.(jpe?g|png|gif|webp)$/i.test(pathname || trimmed);
+      if (isImage && !isLocalMediaSource(trimmed)) {
         attachments.push({ type: "image", payload: { url: trimmed } });
         continue;
       }
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length === 0 || buf.length > MAX_MEDIA_FETCH_BYTES) continue;
-      const isAudio = /^audio\//.test(contentType) || /\.(ogg|opus|mp3|m4a|wav|webm)$/i.test(trimmed);
-      const isVideo = /^video\//.test(contentType) || /\.(mp4|webm|mov)$/i.test(trimmed);
+      if (isImage) {
+        const up = await api.upload.image({ source: { buffer: buf } });
+        const token = up?.token ?? up?.payload?.token;
+        if (token) attachments.push({ type: "image", payload: { token } });
+        continue;
+      }
+      const isAudio = /^audio\//.test(ct) || /\.(ogg|opus|mp3|m4a|wav|webm)$/i.test(trimmed);
+      const isVideo = /^video\//.test(ct) || /\.(mp4|webm|mov)$/i.test(trimmed);
       if (audioAsVoice && isAudio) {
         const up = await api.upload.audio({ source: { buffer: buf } });
         const token = up?.token ?? up?.payload?.token;
@@ -341,7 +411,7 @@ async function sendMaxMessageWithMedia(chatId, text, mediaUrls, api, log, audioA
         if (token) attachments.push({ type: "file", payload: { token } });
       }
     } catch (e) {
-      log?.warn?.(`[Max] Media fetch/upload failed for ${trimmed.slice(0, 80)}: ${e?.message}`);
+      log?.warn?.(`[Max] Media load/upload failed for ${trimmed.slice(0, 80)}: ${e?.message}`);
     }
   }
   const body = { text: text || null, attachments: attachments.length ? attachments : undefined };
