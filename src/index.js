@@ -238,6 +238,8 @@ const MAX_INBOUND_MEDIA_BYTES = 25 * 1024 * 1024;
 
 const HTTP_URL_RE = /^https?:\/\//i;
 const FILE_URL_RE = /^file:\/\//i;
+const INLINE_MEDIA_RE = /(?:^|\n)\s*MEDIA:\s*([^\n]+)\s*(?=\n|$)/gi;
+const AUDIO_AS_VOICE_RE = /\[\[\s*audio_as_voice\s*\]\]/gi;
 
 function isLocalMediaSource(media) {
   if (!media || typeof media !== "string") return false;
@@ -295,6 +297,44 @@ async function loadMediaBuffer(mediaUrl, log) {
   };
   const contentType = extToMime[ext] || "application/octet-stream";
   return { buffer: buf, contentType };
+}
+
+/**
+ * Разбирает inline-директивы из текста ответа агента:
+ * - [[audio_as_voice]]
+ * - MEDIA:<url-or-path> (одна на строку)
+ *
+ * Возвращает очищенный текст, список media URL/путей и признак audioAsVoice.
+ *
+ * @param {string} text
+ * @returns {{ text: string, mediaUrls: string[], audioAsVoice: boolean }}
+ */
+function parseInlineMediaDirectives(text) {
+  const src = String(text ?? "");
+  const mediaUrls = [];
+  let cleaned = src.replace(AUDIO_AS_VOICE_RE, "").trim();
+  cleaned = cleaned.replace(INLINE_MEDIA_RE, (_, raw) => {
+    const v = String(raw ?? "").trim();
+    if (!v) return "";
+    const unquoted =
+      (v.startsWith('"') && v.endsWith('"')) || (v.startsWith("'") && v.endsWith("'"))
+        ? v.slice(1, -1).trim()
+        : v;
+    if (unquoted) mediaUrls.push(unquoted);
+    return "";
+  });
+  // Схлопываем лишние пустые строки после удаления директив.
+  cleaned = cleaned
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return {
+    text: cleaned,
+    mediaUrls,
+    audioAsVoice: AUDIO_AS_VOICE_RE.test(src),
+  };
 }
 
 /** Маппинг типа вложения Max → MIME для типов без URL. */
@@ -715,15 +755,27 @@ async function processMaxUpdate(update, { cfg, accountId, api, channelRuntime, l
       cfg,
       dispatcherOptions: {
         deliver: async (payload) => {
-          const text =
+          const textRaw =
             payload?.text ??
             (Array.isArray(payload?.blocks)
               ? (payload.blocks.find((b) => b?.type === "text")?.text ?? "")
               : "") ??
             payload?.summary ??
             "";
-          const mediaUrls = payload?.mediaUrls?.length ? payload.mediaUrls : payload?.mediaUrl ? [payload.mediaUrl] : [];
-          await sendToMax(replyPeerId, text, { mediaUrls, api, log, audioAsVoice: payload?.audioAsVoice, chatKind });
+          const parsed = parseInlineMediaDirectives(textRaw);
+          const payloadMediaUrls = payload?.mediaUrls?.length
+            ? payload.mediaUrls
+            : payload?.mediaUrl
+              ? [payload.mediaUrl]
+              : [];
+          const mediaUrls = [...new Set([...payloadMediaUrls, ...parsed.mediaUrls])];
+          await sendToMax(replyPeerId, parsed.text, {
+            mediaUrls,
+            api,
+            log,
+            audioAsVoice: payload?.audioAsVoice || parsed.audioAsVoice,
+            chatKind,
+          });
         },
       },
       replyOptions: {
