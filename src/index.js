@@ -869,7 +869,12 @@ async function processMaxUpdate(update, { cfg, accountId, api, channelRuntime, l
         },
       },
       replyOptions: {
-        images: imageUrls.length > 0 ? imageUrls.map((url) => ({ url })) : undefined,
+        // images: imageUrls.length > 0 ? imageUrls.map((url) => ({ url })) : undefined,
+        // NOTE: Disabled — передача images через replyOptions вызывает ошибку
+        // "messages.N.content.1.image.source.base64.media_type: Field required"
+        // в Anthropic API. Ядро OC сохраняет base64-блок без media_type в истории сессии.
+        // Картинка остаётся в тексте как плейсхолдер <media:image>.
+        // TODO: репортить баг в openclaw core.
         onToolStart: () => setThinking(),
         onCompactionStart: () => setThinking(),
         onCompactionEnd: () => setThinking(),
