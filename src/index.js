@@ -399,8 +399,19 @@ async function fetchAndSaveMaxAttachments(msg, channelRuntime, log) {
 }
 
 /**
- * Загружает аудио напрямую через MAX API (обход бага SDK где uploadFromBuffer не возвращает token).
- * Для audio/video MAX сначала возвращает token в ответе на getUploadUrl, и его нужно использовать.
+ * Загружает аудио напрямую через MAX API, минуя SDK-хелпер upload.audio.
+ *
+ * Баг SDK (@maxhub/max-bot-api): метод Upload.uploadFromBuffer вызывает res.json()
+ * на ответе сервера шага 2, но MAX API возвращает XML <retval>1</retval>, а не JSON.
+ * При этом token уже содержится в ответе шага 1 (POST /uploads), но SDK его теряет,
+ * потому что поле token отсутствует в типе GetUploadUrlResponse.
+ * Итог: api.upload.audio({ source: buffer }) всегда возвращает { token: undefined }.
+ *
+ * Баг репортнут: https://github.com/max-messenger/max-bot-api-client-ts/issues/226
+ * (там про video, но audio задет той же причиной).
+ *
+ * Обходное решение — воспроизводим корректный uploadFromStream-путь вручную:
+ * шаг 1 даёт token, шаг 2 просто загружает файл (ответ игнорируем).
  */
 async function uploadAudioDirect(buf, botToken, log) {
   // Шаг 1: получить upload URL + token
