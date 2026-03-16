@@ -435,16 +435,17 @@ async function uploadAudioDirect(buf, botToken, log) {
 /**
  * Загружает медиа по URL и отправляет в чат: картинки по url в attachment, остальное — upload + token.
  *
- * @param {number} chatId - ID чата
+ * @param {number} chatId - ID чата или пользователя
  * @param {string} text - Текст сообщения
  * @param {string[]} mediaUrls - URL медиа
  * @param {object} api - bot.api (messages.send, upload.*)
  * @param {object} log - logger
  * @param {boolean} [audioAsVoice] - отправлять аудио как голосовое (кружок)
  * @param {string} [botToken] - токен бота для прямых вызовов API
+ * @param {string} [chatKind] - "direct" | "group"; для DM используется user_id вместо chat_id
  * @returns {Promise<void>}
  */
-async function sendMaxMessageWithMedia(chatId, text, mediaUrls, api, log, audioAsVoice, botToken) {
+async function sendMaxMessageWithMedia(chatId, text, mediaUrls, api, log, audioAsVoice, botToken, chatKind) {
   const attachments = [];
   for (const url of mediaUrls) {
     if (!url || typeof url !== "string") continue;
@@ -517,7 +518,9 @@ async function sendMaxMessageWithMedia(chatId, text, mediaUrls, api, log, audioA
     return false;
   }
   const body = { text: safeText || null, attachments: attachments.length ? attachments : undefined };
-  await api.raw.messages.send({ chat_id: chatId, ...body });
+  // В Max API для личных сообщений нужен user_id, для групп — chat_id.
+  const addrField = chatKind === "group" ? { chat_id: chatId } : { user_id: chatId };
+  await api.raw.messages.send({ ...addrField, ...body });
   return attachments.length > 0;
 }
 
@@ -553,6 +556,7 @@ async function sendToMaxImpl(toId, text, opts, sendTextOnly) {
       opts.log,
       opts.audioAsVoice === true,
       opts.botToken,
+      opts.chatKind,
     );
     if (sentMedia) {
       opts?.log?.info?.(`[Max] Sent reply with media to chat ${num}`);
@@ -1066,15 +1070,34 @@ export default function register(api) {
           throw new Error(`[Max] Invalid recipient id: ${to}`);
         }
         const isLikelyAudio = /\.(ogg|opus|mp3|m4a|wav|webm)$/i.test(mediaUrl);
-        await sendMaxMessageWithMedia(
-          toNum,
-          text ?? "",
-          [mediaUrl.trim()],
-          bot.api,
-          api.logger,
-          isLikelyAudio,
-          account.token,
-        );
+        // Сначала пробуем как DM (user_id), при 404 — как групповой чат (chat_id).
+        try {
+          await sendMaxMessageWithMedia(
+            toNum,
+            text ?? "",
+            [mediaUrl.trim()],
+            bot.api,
+            api.logger,
+            isLikelyAudio,
+            account.token,
+            "direct",
+          );
+        } catch (dmErr) {
+          if (String(dmErr?.message).includes("404")) {
+            await sendMaxMessageWithMedia(
+              toNum,
+              text ?? "",
+              [mediaUrl.trim()],
+              bot.api,
+              api.logger,
+              isLikelyAudio,
+              account.token,
+              "group",
+            );
+          } else {
+            throw dmErr;
+          }
+        }
         api.logger.debug("[Max] Media sent successfully");
         return { channel: "max", messageId: `max-media-${Date.now()}` };
       },
