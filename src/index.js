@@ -417,7 +417,7 @@ async function uploadAudioDirect(buf, botToken, log) {
   // Шаг 1: получить upload URL + token
   const urlResp = await fetch("https://platform-api.max.ru/uploads?type=audio", {
     method: "POST",
-    headers: { Authorization: botToken },
+    headers: { Authorization: `Bearer ${botToken}` },
   });
   if (!urlResp.ok) throw new Error(`getUploadUrl failed: ${urlResp.status}`);
   const { url: uploadUrl, token } = await urlResp.json();
@@ -453,7 +453,11 @@ async function sendMaxMessageWithMedia(chatId, text, mediaUrls, api, log, audioA
     if (!trimmed) continue;
     try {
       const { buffer: buf, contentType } = await loadMediaBuffer(trimmed, log);
-      if (buf.length === 0 || buf.length > MAX_MEDIA_FETCH_BYTES) continue;
+      if (buf.length === 0) {
+        log?.warn?.(`[Max] Skip media: empty file (0 bytes) — ${trimmed.slice(0, 80)}`);
+        continue;
+      }
+      if (buf.length > MAX_MEDIA_FETCH_BYTES) continue;
       const ct = (contentType || "").split(";")[0].trim().toLowerCase();
       const pathname = HTTP_URL_RE.test(trimmed)
         ? (() => {
