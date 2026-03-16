@@ -369,6 +369,10 @@ async function fetchAndSaveMaxAttachments(msg, channelRuntime, log) {
     const url = att?.payload?.url;
     if (!url || typeof url !== "string" || !url.trim()) continue;
     const type = att?.type ?? "file";
+    // Images are forwarded to the agent as replyOptions.images (inline vision content).
+    // Saving them to MediaPaths as well would cause the same image to be processed twice
+    // by the vision model — once via applyMediaUnderstanding and once as inline vision input.
+    if (type === "image") continue;
     try {
       const fetched = await fetchRemoteMedia({
         url: url.trim(),
@@ -395,6 +399,29 @@ async function fetchAndSaveMaxAttachments(msg, channelRuntime, log) {
 }
 
 /**
+ * Загружает аудио напрямую через MAX API (обход бага SDK где uploadFromBuffer не возвращает token).
+ * Для audio/video MAX сначала возвращает token в ответе на getUploadUrl, и его нужно использовать.
+ */
+async function uploadAudioDirect(buf, botToken, log) {
+  // Шаг 1: получить upload URL + token
+  const urlResp = await fetch("https://platform-api.max.ru/uploads?type=audio", {
+    method: "POST",
+    headers: { Authorization: botToken },
+  });
+  if (!urlResp.ok) throw new Error(`getUploadUrl failed: ${urlResp.status}`);
+  const { url: uploadUrl, token } = await urlResp.json();
+  if (!token) throw new Error("No audio token from getUploadUrl");
+
+  // Шаг 2: загрузить файл (ответ — XML <retval>1</retval>, игнорируем)
+  const formData = new FormData();
+  formData.append("data", new Blob([buf]), "voice.ogg");
+  const uploadResp = await fetch(uploadUrl, { method: "POST", body: formData });
+  if (!uploadResp.ok) throw new Error(`audio upload failed: ${uploadResp.status}`);
+
+  return token;
+}
+
+/**
  * Загружает медиа по URL и отправляет в чат: картинки по url в attachment, остальное — upload + token.
  *
  * @param {number} chatId - ID чата
@@ -403,9 +430,10 @@ async function fetchAndSaveMaxAttachments(msg, channelRuntime, log) {
  * @param {object} api - bot.api (messages.send, upload.*)
  * @param {object} log - logger
  * @param {boolean} [audioAsVoice] - отправлять аудио как голосовое (кружок)
+ * @param {string} [botToken] - токен бота для прямых вызовов API
  * @returns {Promise<void>}
  */
-async function sendMaxMessageWithMedia(chatId, text, mediaUrls, api, log, audioAsVoice) {
+async function sendMaxMessageWithMedia(chatId, text, mediaUrls, api, log, audioAsVoice, botToken) {
   const attachments = [];
   for (const url of mediaUrls) {
     if (!url || typeof url !== "string") continue;
@@ -439,16 +467,21 @@ async function sendMaxMessageWithMedia(chatId, text, mediaUrls, api, log, audioA
       const isVideo = /^video\//.test(ct) || /\.(mp4|webm|mov)$/i.test(trimmed);
       if (isAudio) {
         try {
-          const up = await api.upload.audio({ source: buf });
-          const token = up?.token;
-          if (token) {
+          // Используем прямой upload — SDK не возвращает token из uploadFromBuffer (баг).
+          if (botToken) {
+            const token = await uploadAudioDirect(buf, botToken, log);
             attachments.push({ type: "audio", payload: { token } });
           } else {
-            throw new Error("no audio token");
+            const up = await api.upload.audio({ source: buf });
+            const token = up?.token;
+            if (token) {
+              attachments.push({ type: "audio", payload: { token } });
+            } else {
+              throw new Error("no audio token");
+            }
           }
         } catch (audioErr) {
-          // Max API can reject some audio codecs/containers (e.g. mp3 from TTS).
-          // Fall back to generic file upload to avoid dropping the media reply.
+          // Fallback to generic file upload.
           log?.warn?.(`[Max] upload.audio failed, fallback to file: ${audioErr?.message}`);
           const up = await api.upload.file({ source: buf });
           const token = up?.token;
@@ -508,6 +541,7 @@ async function sendToMaxImpl(toId, text, opts, sendTextOnly) {
       opts.api,
       opts.log,
       opts.audioAsVoice === true,
+      opts.botToken,
     );
     if (sentMedia) {
       opts?.log?.info?.(`[Max] Sent reply with media to chat ${num}`);
@@ -808,6 +842,7 @@ async function processMaxUpdate(update, { cfg, accountId, api, channelRuntime, l
             log,
             audioAsVoice: payload?.audioAsVoice || parsed.audioAsVoice,
             chatKind,
+            botToken: account.token,
           });
           if (sentMedia && (payload?.audioAsVoice || parsed.audioAsVoice)) {
             sentVoiceMediaThisTurn = true;
@@ -1027,6 +1062,7 @@ export default function register(api) {
           bot.api,
           api.logger,
           isLikelyAudio,
+          account.token,
         );
         api.logger.debug("[Max] Media sent successfully");
         return { channel: "max", messageId: `max-media-${Date.now()}` };
