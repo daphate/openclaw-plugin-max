@@ -4,63 +4,21 @@
 
 **Возможности:** личные и групповые чаты, long polling и webhook, политики доступа (pairing, allowlist, open), несколько аккаунтов. Поддержка медиа: приём и отправка голосовых, фото, видео, файлов (как в Telegram). При обработке сообщения агентом показывается индикатор «печатает» (typing_on) вместо эмодзи реакций (в Max API нет реакций на сообщения).
 
-В OpenClaw плагины каналов устанавливаются в каталог **extensions** (глобально или в workspace). OpenClaw по умолчанию подхватывает плагины из этих каталогов без дополнительной настройки путей.
-
 ---
 
-## Установка
+## Быстрый старт
 
 ### 1. Требования
 
-- **Node.js** не ниже **18** (рекомендуется 20 LTS) — для запуска плагина и тестов.
-- **OpenClaw** с поддержкой плагинов и каналов.
-- Токен бота Max: [business.max.ru](https://business.max.ru/self) → Чат-боты → Интеграция → Получить токен.
+- **Node.js** не ниже **18** (рекомендуется 20 LTS)
+- **OpenClaw** с поддержкой плагинов
+- Токен бота Max: [business.max.ru](https://business.max.ru/self) → Чат-боты → Интеграция → Получить токен
 
-### 2. Установка Node.js (если ещё не установлен)
+### 2. Установка плагина
 
-Выберите один из способов.
-
-**Через nvm (удобно для разработки):**
+В каталоге **extensions** OpenClaw (глобально или в workspace):
 
 ```bash
-# Установка nvm
-curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash
-source ~/.bashrc   # или ~/.zshrc
-
-# Установка Node.js 20 LTS
-nvm install 20
-nvm use 20
-node -v   # должно быть v20.x.x
-```
-
-**Через официальный инсталлер:**
-
-- Скачайте установщик с [nodejs.org](https://nodejs.org/) (LTS) и установите по инструкции для вашей ОС.
-
-**Через менеджер пакетов (Linux):**
-
-```bash
-# Ubuntu/Debian (NodeSource)
-curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# Проверка
-node -v
-npm -v
-```
-
-### 3. Установка плагина в extensions
-
-OpenClaw ищет плагины в каталоге **extensions**:
-- **Глобально:** `~/.config/openclaw/extensions/` (или аналог по XDG)
-- **В workspace:** `<workspace>/.openclaw/extensions/`
-
-Установите плагин в один из этих каталогов.
-
-**Вариант A: из репозитория (рекомендуется)**
-
-```bash
-# Каталог extensions (выберите один)
 EXTENSIONS_DIR="$HOME/.config/openclaw/extensions"   # глобально
 # или для workspace:
 # EXTENSIONS_DIR="/path/to/workspace/.openclaw/extensions"
@@ -69,50 +27,10 @@ mkdir -p "$EXTENSIONS_DIR"
 cd "$EXTENSIONS_DIR"
 git clone https://github.com/daphate/openclaw-plugin-max.git
 cd openclaw-plugin-max
-```
-
-**Вариант B: скопировать вручную**
-
-Скачайте архив репозитория и распакуйте в каталог extensions, например в `~/.config/openclaw/extensions/openclaw-plugin-max/` или `<workspace>/.openclaw/extensions/openclaw-plugin-max/`.
-
-### 4. Установка зависимостей
-
-В каталоге плагина выполните:
-
-```bash
-cd "$EXTENSIONS_DIR/openclaw-plugin-max"
 npm install
 ```
 
-Будет установлена зависимость `@maxhub/max-bot-api` (и транзитивные зависимости). Проверка:
-
-```bash
-npm list
-# openclaw-plugin-max@1.0.0
-# └── @maxhub/max-bot-api@0.2.x
-```
-
-### 5. Подключение плагина в OpenClaw
-
-Плагин из каталога **extensions** подхватывается OpenClaw автоматически. В конфиге включите его:
-
-```json
-{
-  "plugins": {
-    "entries": {
-      "openclaw-plugin-max": { "enabled": true }
-    }
-  }
-}
-```
-
-Либо укажите в списке разрешённых: `"plugins": { "allow": ["openclaw-plugin-max"] }`.
-
-Дополнительно указывать путь к плагину не нужно — каталог **extensions** сканируется по умолчанию.
-
----
-
-## Настройка канала Max
+### 3. Конфигурация
 
 В `openclaw.json` или `openclaw.yaml`:
 
@@ -129,79 +47,167 @@ channels:
         token: "ANOTHER_TOKEN"
 ```
 
-Поле `token` можно заменить на `botToken` — плагин принимает оба варианта.
+Поле `token` можно заменить на `botToken`.
+
+### 4. Запуск
+
+```bash
+# Long polling (получение обновлений через опрос)
+openclaw gateway run
+
+# Или настроить webhook в Max: https://ваш-домен/plugins/max/webhook
+```
 
 ---
 
-## Использование
+## Переменные окружения и конфигурация
 
-- **Отправка сообщений (outbound):**  
-  `openclaw messages send --channel max --to <chat_id> "Текст"`
-- **Получение и ответы:** бот обрабатывает входящие сообщения при:
-  - **Long Polling:** запуск Gateway: `openclaw gateway run` — бот получает обновления через long polling.
-  - **Webhook:** в Max укажите URL `https://ваш-домен/plugins/max/webhook` — события приходят по POST.
+Все параметры задаются в конфиге OpenClaw, переменные окружения не требуются. Плагин считывает:
 
-Параметры: для личных сообщений используется `user_id`, для групповых — `chat_id`; в CLI оба передаются в `--to`.
+- `channels.max.token` или `channels.max.botToken` — токен бота (обязателен)
+- `channels.max.enabled` — включить канал (по умолчанию `true`)
+- `channels.max.dmPolicy` — политика доступа DM: `pairing` (по умолчанию), `allowlist`, `open`, `disabled`
+- `channels.max.allowFrom` — список user_id для allowlist
+- `channels.max.groupPolicy` — политика доступа групп: `open` (по умолчанию), `disabled`, `allowlist`
+- `channels.max.groupAllowFrom` — список user_id для групп
+- `channels.max.groups` — настройки по группам (включение/отключение, разрешения)
+- `channels.max.direct` / `channels.max.dms` — настройки по персоналиям
+- `channels.max.accounts` — конфиг для нескольких аккаунтов
+
+**Multi-account:** каждый аккаунт в `channels.max.accounts.<id>` может иметь свой токен и настройки.
 
 ---
 
-## Медиа и индикатор «думает»
+## Медиа
 
 ### Входящие медиа
 
-Плагин принимает голосовые сообщения, фото, видео, файлы (как в Telegram). Вложения из `message.body.attachments` передаются агенту:
-- **Текст:** в `Body` добавляются плейсхолдеры `<media:image>`, `<media:video>`, `<media:audio>`, `<media:document>`.
-- **Картинки:** URL передаются в `replyOptions.images` — агент получает изображения для анализа.
-- Сообщения только с вложениями (без текста) обрабатываются.
+Плагин принимает и передаёт агенту:
+- **Текст с вложениями:** плейсхолдеры в Body (`<media:image>`, `<media:video>`, `<media:audio>`, `<media:document>`)
+- **Картинки:** передаются как URLs для vision (inline images для анализа агентом)
+- **Аудио/видео/файлы:** загружаются в media store и передаются в `MediaPaths`/`MediaTypes` для обработки (транскрипция, описание)
 
 ### Исходящие медиа
 
-Когда агент отвечает с медиа (`payload.mediaUrl` или `payload.mediaUrls`):
-- **Картинки:** отправляются по URL без загрузки.
-- **Аудио, видео, файлы:** загружаются по URL через Max Upload API, затем отправляются с вложениями.
-- Поддерживается `payload.audioAsVoice` — аудио как голосовое сообщение (кружок).
-- Лимит размера файла по URL: 50 MB.
+Агент может отправить медиа:
+
+```python
+# Через payload.mediaUrl(s)
+payload.mediaUrl = "https://example.com/image.jpg"
+payload.mediaUrls = ["audio.mp3", "video.mp4"]
+
+# Или через inline-директивы в тексте
+MEDIA:https://example.com/photo.jpg
+MEDIA:/local/path/audio.ogg
+```
+
+**Поддерживаемые форматы:**
+- Картинки: JPEG, PNG, GIF, WebP (отправляются по URL, без загрузки)
+- Аудио: OGG, Opus, MP3, M4A, WAV, WebM
+- Видео: MP4, WebM, MOV
+- Файлы: любой формат
+
+**Параметры:**
+- `[[audio_as_voice]]` — отправить аудио как голосовое сообщение (кружок)
+- Лимит размера по URL: 50 MB
 
 ### Индикатор «думает»
 
-В Max API нет реакций на сообщения (как в Telegram). Вместо эмодзи используется **индикатор набора** (`typing_on`): пока агент обрабатывает сообщение, в чате отображается «печатает». Индикатор обновляется при вызове инструментов и компакции контекста.
+В Max нет реакций. Вместо эмодзи используется **typing indicator** (`typing_on`), который обновляется при обработке инструментов и компакции контекста.
+
+---
+
+## Управление доступом
+
+### Политики (dmPolicy / groupPolicy)
+
+- **pairing** — требует подтверждения через pairing code (DM по умолчанию)
+- **allowlist** — только пользователи из `allowFrom`
+- **open** — все пользователи (группы по умолчанию)
+- **disabled** — запретить полностью
+
+### Пример конфига с разными политиками
+
+```yaml
+channels:
+  max:
+    token: "bot_token"
+    dmPolicy: "pairing"         # DM требует pairing
+    allowFrom: [123, 456]       # или может быть в allowlist
+    groupPolicy: "open"         # группы открыты
+    groups:
+      "-1001234567890":         # group chat_id (отрицательное число)
+        enabled: true
+        groupPolicy: "allowlist"
+        allowFrom: [111, 222]
+    direct:
+      "999":                     # user_id
+        enabled: false          # отключить чат с пользователем 999
+```
 
 ---
 
 ## Разработка и тесты
 
-В каталоге плагина:
-
 ```bash
+# Запуск unit-тестов
 npm test
+
+# Проверить зависимости
+npm list
+npm audit
 ```
 
-Запускаются unit-тесты (Node.js встроенный test runner) для чистых функций: нормализация аккаунтов, разрешения allowFrom, извлечение получателя/отправителя, сбор вложений (`buildMaxBodyWithAttachments`) и т.д.
+Тесты проверяют чистые функции: нормализацию аккаунтов, парсинг вложений, проверку разрешений и т.д.
 
 ---
 
-## Бот не отвечает на сообщения
+## Диагностика
 
-1. **Gateway должен быть запущен:** `openclaw gateway run`.
-2. Убедитесь, что каналы не отключены: переменная `OPENCLAW_SKIP_CHANNELS` не должна быть `1`.
-3. В логах при запуске Gateway и при отправке сообщения боту смотрите:
-   - `[Max] Starting ...` — long polling запущен;
-   - `[Max] Received message` — пришло событие от Max;
-   - `[Max] Skip: no recipient id` — в update нет корректного получателя;
-   - `[Max] channelRuntime unavailable` — нужно запускать через Gateway;
-   - `[Max] Dispatch error` — ошибка маршрутизации или агента.
-4. В конфиге должен быть настроен агент (например, `agents.main`) и маршрутизация для канала `max`.
-5. При webhook проверьте, что Max отправляет события на ваш HTTPS URL.
+### Бот не отвечает
+
+1. **Gateway запущен?** `openclaw gateway run`
+2. **Плагин активен?** В логах должно быть `[Max] Starting ...` при старте
+3. **Токен верный?** Проверить в конфиге `channels.max.token`
+4. **Доступ разрешён?** Проверить `dmPolicy`, `allowFrom`, `pairing`
+5. **Webhook?** Если используется webhook, убедиться, что Max отправляет события на `https://ваш-домен/plugins/max/webhook`
+
+### Логи (при запуске Gateway)
+
+```
+[Max] Starting ...                           # плагин инициализирован
+[Max] Received message                       # пришло сообщение
+[Max] Skip: no recipient id                  # ошибка парсинга recipient
+[Max] Blocked: DM allowlist, sender not in list  # доступ запрещён
+[Max] Dispatch error: ...                    # ошибка маршрутизации/агента
+[Max] Sent reply with media to chat ...      # ответ отправлен успешно
+```
+
+---
+
+## Ключевые файлы
+
+| Файл | Назначение |
+|------|-----------|
+| `src/index.js` | Основная реализация: регистрация канала, обработка обновлений, отправка сообщений |
+| `test/index.test.js` | Unit-тесты (Node.js test runner) |
+| `package.json` | Метаданные, зависимости, точка входа |
+| `openclaw.plugin.json` | Описание плагина для OpenClaw (версия, описание, схема конфига) |
+| `SECURITY.md` | Анализ безопасности |
+| `ARCHITECTURE.md` | Архитектура и слои плагина |
 
 ---
 
 ## Ссылки
 
-- Официальный клиент Max: [max-bot-api-client-ts](https://github.com/max-messenger/max-bot-api-client-ts)
-- Документация API Max: https://dev.max.ru/docs-api
+- [Max мессенджер](https://max.ru)
+- [OpenClaw](https://github.com/openclaw/openclaw)
+- [Max Bot API](https://github.com/max-messenger/max-bot-api-client-ts)
+- [Max Platform API docs](https://dev.max.ru/docs-api)
+- [Business Max](https://business.max.ru)
 
 ---
 
 ## Лицензия
 
-MIT.
+MIT
