@@ -60,6 +60,30 @@ openclaw gateway run
 
 ---
 
+## Пример: Max как чат для задач X/Twitter
+
+Max остаётся каналом для личных и групповых чатов. Для публичных X/Twitter-задач
+тот же агент OpenClaw может использовать отдельный плагин
+[TweetClaw](https://github.com/Xquik-dev/tweetclaw): scrape tweets, search
+tweets, search tweet replies, follower export, user lookup, media upload, media
+download, direct messages, monitor tweets, webhooks, giveaway draws, post tweets
+и post tweet replies с подтверждением OpenClaw.
+
+```bash
+openclaw plugins install @xquik/tweetclaw
+openclaw config set plugins.entries.tweetclaw.config.apiKey "$XQUIK_API_KEY"
+openclaw config set tools.alsoAllow '["explore", "tweetclaw"]'
+```
+
+Храните Xquik API key в локальном конфиге OpenClaw или менеджере секретов. Не
+отправляйте ключ в чат Max. Перед публикацией твитов, ответов, direct messages,
+подписок, мониторов, вебхуков и розыгрышей проверяйте approval prompt в
+OpenClaw. npm package `@xquik/tweetclaw` является каноническим источником
+установки; [ClawHub page](https://clawhub.ai/plugins/@xquik/tweetclaw) можно
+использовать для просмотра.
+
+---
+
 ## Переменные окружения и конфигурация
 
 Все параметры задаются в конфиге OpenClaw, переменные окружения не требуются. Плагин считывает:
